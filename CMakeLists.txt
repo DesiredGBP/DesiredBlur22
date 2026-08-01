@@ -5,7 +5,7 @@ set(VCPKG_LIBRARY_LINKAGE static)
 if(WIN32)
   set(
     VCPKG_TARGET_TRIPLET
-    "x64-windows-static"
+    "x64-windows"
     CACHE STRING ""
   )
 endif()
