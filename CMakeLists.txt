@@ -249,6 +249,7 @@ target_include_directories(
   blur
   PRIVATE
   "${PROJECT_SOURCE_DIR}/dependencies/keyauth"
+  "${PROJECT_SOURCE_DIR}/dependencies/keyauth/lib"
 )
 
 target_link_libraries(
