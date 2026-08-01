@@ -133,7 +133,6 @@ function(setup_target target)
     PRIVATE
     NOMINMAX
     BOOST_FILESYSTEM_NO_LIB
-    BOOST_FILESYSTEM_STATIC_LINK=1
   )
 
   if(APPLE)
