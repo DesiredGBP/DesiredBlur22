@@ -1,270 +1,328 @@
-name: Build
+name: Build Desired Blur for Windows
 
-on: [push]
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
 
 jobs:
-  build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-14, windows-2022]
-        build-type: [Release]
+  windows-build:
+    runs-on: windows-2022
+    timeout-minutes: 180
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+
+      - name: Download ImGui and stb
+        shell: pwsh
+        run: |
+          Remove-Item "dependencies/imgui" `
+            -Recurse -Force -ErrorAction SilentlyContinue
+
+          Remove-Item "dependencies/stb" `
+            -Recurse -Force -ErrorAction SilentlyContinue
+
+          git clone --depth 1 `
+            https://github.com/ocornut/imgui.git `
+            dependencies/imgui
+
+          git clone --depth 1 `
+            https://github.com/nothings/stb.git `
+            dependencies/stb
+
+      - name: Enable Visual Studio
+        uses: ilammy/msvc-dev-cmd@v1
         with:
-          submodules: recursive
+          arch: x64
 
-      # ── ccache ────────────────────────────────────────────────────────────
-      - name: Install ccache (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get install -y ccache
+      - name: Install Windows build tools
+        shell: pwsh
+        run: |
+          choco install ccache innosetup ninja `
+            --yes `
+            --no-progress
 
-      - name: Install ccache (macOS)
-        if: runner.os == 'macOS'
-        run: brew install ccache
-
-      - name: Install ccache (Windows)
-        if: runner.os == 'Windows'
-        run: choco install ccache --no-progress
+      - name: Configure ccache
+        shell: pwsh
+        run: |
+          ccache --set-config=max_size=500M
+          ccache --set-config=compression=true
+          ccache --zero-stats
 
       - name: Cache ccache
         uses: actions/cache@v5
         with:
-          path: |
-            ~/.ccache
-            ~/AppData/Local/ccache
-          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.build-type }}-${{ github.sha }}
+          path: ~/AppData/Local/ccache
+          key: ccache-windows-x64-release-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.build-type }}-
+            ccache-windows-x64-release-
 
-      - name: Configure ccache
-        shell: bash
-        run: |
-          ccache --set-config=max_size=500M
-          ccache --set-config=compression=true
-          ccache -z  # zero stats so we can see hit rate in logs
-
-      # ── Linux setup ───────────────────────────────────────────────────────
-      - name: Cache apt packages
-        if: runner.os == 'Linux'
-        uses: actions/cache@v5
-        with:
-          path: /var/cache/apt/archives
-          key: apt-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yml') }}
-          restore-keys: apt-${{ runner.os }}-
-
-      - name: Add GCC repository
-        if: runner.os == 'Linux'
-        run: |
-          for i in {1..5}; do
-            sudo apt-get update && sudo apt-get install -y software-properties-common && break || sleep 10
-          done
-          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libx11-dev \
-            libxcursor-dev \
-            libxinerama-dev \
-            libxi-dev \
-            libxrandr-dev \
-            libgl1-mesa-dev \
-            libncurses6 \
-            gcc-13 g++-13 \
-            libfontconfig1-dev \
-            autoconf automake libtool pkg-config libltdl-dev \
-            libnotify-dev \
-            ninja-build \
-            gperf
-
-      - name: Install GCC
-        if: runner.os == 'Linux'
-        run: |
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 100 --slave /usr/bin/g++ g++ /usr/bin/g++-13 --slave /usr/bin/gcov gcov /usr/bin/gcov-13
-          sudo update-alternatives --set gcc /usr/bin/gcc-13
-
-      # ── Project dependencies ──────────────────────────────────────────────
-      - name: Cache build dependencies (macOS)
-        if: runner.os == 'macOS'
+      - name: Cache runtime dependencies
         uses: actions/cache@v5
         with:
           path: ci/out
-          key: deps-macos-${{ runner.arch }}-${{ hashFiles('ci/build-dependencies-macos.sh') }}
+          key: runtime-deps-windows-${{ hashFiles('ci/build-dependencies-windows.ps1') }}
 
-      - name: Cache build dependencies (Linux)
-        if: runner.os == 'Linux'
-        uses: actions/cache@v5
-        with:
-          path: ci/out
-          key: deps-linux-${{ runner.arch }}-${{ hashFiles('ci/build-dependencies-linux.sh') }}
-
-      - name: Cache build dependencies (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/cache@v5
-        with:
-          path: ci/out
-          key: deps-windows-${{ runner.arch }}-${{ hashFiles('ci/build-dependencies-windows.ps1') }}
-
-      - name: Collect dependencies (macOS)
-        if: runner.os == 'macOS'
+      - name: Collect runtime dependencies
+        shell: pwsh
         run: |
-          brew install ffmpeg libass zimg imagemagick autoconf automake libtool gcc ffmpeg llvm@20 meson xxhash vapoursynth fftw dylibbundler vulkan-loader molten-vk
-          cd ci
-          bash build-dependencies-macos.sh
+          Set-Location ci
+          ./build-dependencies-windows.ps1
 
-      - name: Collect dependencies (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          cd ci
-          pwsh build-dependencies-windows.ps1
-
-      - name: Collect dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          cd ci
-          bash build-dependencies-linux.sh
-
-      # ── vcpkg ─────────────────────────────────────────────────────────────
       - name: Set up vcpkg
-        shell: bash
+        shell: pwsh
         run: |
-          git clone https://github.com/microsoft/vcpkg.git
-          cd vcpkg
-          ./bootstrap-vcpkg.sh
+          Remove-Item "$env:GITHUB_WORKSPACE/vcpkg" `
+            -Recurse -Force -ErrorAction SilentlyContinue
 
-      - name: Get vcpkg commit hash
+          git clone --depth 1 `
+            https://github.com/microsoft/vcpkg.git `
+            "$env:GITHUB_WORKSPACE/vcpkg"
+
+          & "$env:GITHUB_WORKSPACE/vcpkg/bootstrap-vcpkg.bat" `
+            -disableMetrics
+
+      - name: Get vcpkg commit
         id: vcpkg-commit
-        shell: bash
-        run: echo "hash=$(git -C vcpkg rev-parse HEAD)" >> $GITHUB_OUTPUT
+        shell: pwsh
+        run: |
+          $hash = git -C vcpkg rev-parse HEAD
+          "hash=$hash" >> $env:GITHUB_OUTPUT
 
-      - name: Cache vcpkg packages
+      - name: Cache dynamic vcpkg packages
         uses: actions/cache@v5
         with:
           path: |
-            vcpkg_installed/
-            vcpkg/downloads/
-            vcpkg/packages/
-          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ matrix.build-type }}-${{ steps.vcpkg-commit.outputs.hash }}-${{ hashFiles('vcpkg.json') }}
+            vcpkg_installed
+            vcpkg/downloads
+            vcpkg/packages
+          key: vcpkg-dynamic-windows-x64-release-${{ steps.vcpkg-commit.outputs.hash }}-${{ hashFiles('vcpkg.json', 'CMakePresets.json', 'CMakeLists.txt') }}
           restore-keys: |
-            vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ matrix.build-type }}-${{ steps.vcpkg-commit.outputs.hash }}-
-            vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ matrix.build-type }}-
+            vcpkg-dynamic-windows-x64-release-${{ steps.vcpkg-commit.outputs.hash }}-
+            vcpkg-dynamic-windows-x64-release-
 
-      # ── Build ─────────────────────────────────────────────────────────────
-      - name: Determine CMake Preset
-        id: select-preset
-        shell: bash
+      - name: Clean old CMake files
+        shell: pwsh
         run: |
-          if [ "${{ runner.os }}" == "Windows" ]; then
-            prefix="win"
-          elif [ "${{ runner.os }}" == "Linux" ]; then
-            prefix="linux"
-          elif [ "${{ runner.os }}" == "macOS" ]; then
-            prefix="mac"
-          fi
-          preset="${prefix}-$(echo "${{ matrix.build-type }}" | tr '[:upper:]' '[:lower:]')"
-          echo "preset=$preset" >> $GITHUB_OUTPUT
+          Remove-Item "CMakeCache.txt" `
+            -Force -ErrorAction SilentlyContinue
 
-      - name: Use Developer Command Prompt for Microsoft Visual C++
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+          Remove-Item "CMakeFiles" `
+            -Recurse -Force -ErrorAction SilentlyContinue
+
+          Remove-Item "build" `
+            -Recurse -Force -ErrorAction SilentlyContinue
+
+          Remove-Item "bin" `
+            -Recurse -Force -ErrorAction SilentlyContinue
 
       - name: Configure CMake
-        run: cmake --preset ${{ steps.select-preset.outputs.preset }}
+        shell: pwsh
         env:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+          VCPKG_DEFAULT_TRIPLET: x64-windows
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
+        run: |
+          cmake --preset win-release `
+            -DVCPKG_TARGET_TRIPLET=x64-windows
 
-      - name: Build
-        run: cmake --build . --preset ${{ steps.select-preset.outputs.preset }}
+      - name: Build Desired Blur
+        shell: pwsh
         env:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
-
-      - name: Print ccache stats
-        shell: bash
-        run: ccache -s
-
-      # ── Package ───────────────────────────────────────────────────────────
-      - name: Prepare Binaries
-        id: prep
-        shell: bash
+          VCPKG_DEFAULT_TRIPLET: x64-windows
         run: |
-          # Set up variables
-          build_dir="bin/${{ matrix.build-type }}"
-          config="${{ runner.os }}-${{ matrix.build-type }}-$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')"
-          bundle_dir="$PWD/bundle"
+          cmake --build . --parallel
 
-          # Create bundle directory for all outputs
-          mkdir -p "$bundle_dir"
-          cd "$build_dir"
+      - name: Print ccache statistics
+        shell: pwsh
+        run: ccache --show-stats
 
-          case "${{ runner.os }}" in
-            "Windows")
-              # Rename binaries
-              mv blur-cli.exe "blur-cli-$config.exe"
-              mv blur-gui.exe "blur-$config.exe"
+      - name: List generated executables
+        shell: pwsh
+        run: |
+          Get-ChildItem `
+            -Path . `
+            -Recurse `
+            -Filter "*.exe" |
+          Select-Object -ExpandProperty FullName
 
-              # Build installer
-              cd ../../
-              cp -r ci/out/* installer/dependencies/lib
-              curl -L https://aka.ms/vs/17/release/vc_redist.x64.exe -o installer/redist/vc_redist.x64.exe
-              cp "$build_dir/blur-cli-$config.exe" installer/resources/blur-cli.exe
-              cp "$build_dir/blur-$config.exe" installer/resources/blur-gui.exe
-              iscc installer/setup.iss
+      - name: Prepare portable package
+        shell: pwsh
+        run: |
+          $artifactRoot = "artifacts"
+          $portable = "$artifactRoot/Desired-Blur-Portable"
 
-              # Copy everything to bundle
-              cp "$build_dir/blur-cli-$config.exe" "$bundle_dir/"
-              cp "$build_dir/blur-$config.exe" "$bundle_dir/"
-              cp installer/output/blur-installer.exe "$bundle_dir/blur-Windows-Installer-x64.exe"
-              ;;
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $portable |
+          Out-Null
 
-            "Linux")
-              # Package everything
-              mkdir -p package
-              mv blur-cli "package/blur-cli-$config"
-              mv blur "package/blur-$config"
-              mv lib/ package/
-              cp -r ../../ci/out/* package/
-              tar -czf "$bundle_dir/blur-$config.tar.gz" -C package .
-              ;;
+          $gui = Get-ChildItem `
+            -Path "bin" `
+            -Recurse `
+            -File |
+          Where-Object {
+            $_.Name -in @(
+              "Desired Blur.exe",
+              "blur-gui.exe",
+              "blur.exe"
+            )
+          } |
+          Select-Object -First 1
 
-            "macOS")
-              # Package CLI
-              mv blur-cli "blur-cli-$config"
-              tar -czf "$bundle_dir/blur-cli-$config.tar.gz" "blur-cli-$config"
+          $cli = Get-ChildItem `
+            -Path "bin" `
+            -Recurse `
+            -File |
+          Where-Object {
+            $_.Name -in @(
+              "Desired Blur CLI.exe",
+              "blur-cli.exe"
+            )
+          } |
+          Select-Object -First 1
 
-              # Create DMG
-              brew install create-dmg
-              mkdir source_folder && mv blur.app source_folder/
-              create-dmg \
-                --volname "Blur Installer" \
-                --window-pos 200 120 \
-                --window-size 600 400 \
-                --icon-size 100 \
-                --icon "blur.app" 175 120 \
-                --hide-extension "blur.app" \
-                --app-drop-link 425 120 \
-                "$bundle_dir/blur-$config.dmg" source_folder
-              ;;
-          esac
+          if (-not $gui) {
+            throw "The GUI executable was not found."
+          }
 
-          # Set outputs
-          echo "config=$config" >> $GITHUB_OUTPUT
+          Copy-Item `
+            $gui.FullName `
+            (Join-Path $portable "Desired Blur.exe") `
+            -Force
 
-      - name: Upload Artifacts
+          if ($cli) {
+            Copy-Item `
+              $cli.FullName `
+              (Join-Path $portable "Desired Blur CLI.exe") `
+              -Force
+          } else {
+            Write-Warning "The CLI executable was not found."
+          }
+
+          if (Test-Path "bin/Release/lib") {
+            Copy-Item `
+              "bin/Release/lib" `
+              $portable `
+              -Recurse `
+              -Force
+          }
+
+          if (Test-Path "ci/out") {
+            Copy-Item `
+              "ci/out/*" `
+              $portable `
+              -Recurse `
+              -Force
+          }
+
+          if (Test-Path "README.md") {
+            Copy-Item "README.md" $portable
+          }
+
+          if (Test-Path "LICENSE") {
+            Copy-Item "LICENSE" $portable
+          }
+
+          Compress-Archive `
+            -Path "$portable/*" `
+            -DestinationPath `
+              "$artifactRoot/Desired-Blur-Windows-x64-Portable.zip" `
+            -Force
+
+      - name: Prepare installer
+        shell: pwsh
+        run: |
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path "installer/resources" |
+          Out-Null
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path "installer/dependencies/lib" |
+          Out-Null
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path "installer/redist" |
+          Out-Null
+
+          $gui = Get-ChildItem `
+            -Path "bin" `
+            -Recurse `
+            -Filter "blur-gui.exe" |
+          Select-Object -First 1
+
+          $cli = Get-ChildItem `
+            -Path "bin" `
+            -Recurse `
+            -Filter "blur-cli.exe" |
+          Select-Object -First 1
+
+          if (-not $gui) {
+            throw "blur-gui.exe was not found for the installer."
+          }
+
+          Copy-Item `
+            $gui.FullName `
+            "installer/resources/blur-gui.exe" `
+            -Force
+
+          if ($cli) {
+            Copy-Item `
+              $cli.FullName `
+              "installer/resources/blur-cli.exe" `
+              -Force
+          }
+
+          if (Test-Path "ci/out") {
+            Copy-Item `
+              "ci/out/*" `
+              "installer/dependencies/lib" `
+              -Recurse `
+              -Force
+          }
+
+          Invoke-WebRequest `
+            -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" `
+            -OutFile "installer/redist/VC_redist.x64.exe"
+
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            "installer/setup.iss"
+
+          $installer = Get-ChildItem `
+            -Path "installer/output" `
+            -Filter "*.exe" |
+          Select-Object -First 1
+
+          if ($installer) {
+            Copy-Item `
+              $installer.FullName `
+              "artifacts/Desired-Blur-Windows-x64-Installer.exe" `
+              -Force
+          } else {
+            Write-Warning "The installer was not generated."
+          }
+
+      - name: Upload Windows build
         uses: actions/upload-artifact@v6
         with:
-          name: Blur-${{ steps.prep.outputs.config }}
-          path: bundle/
-
-      - name: Release
-        uses: softprops/action-gh-release@v2
-        if: github.event_name == 'push' && contains(github.ref, 'refs/tags/')
-        with:
-          files: bundle/*
+          name: Desired-Blur-Windows-x64
+          path: |
+            artifacts/Desired-Blur-Windows-x64-Portable.zip
+            artifacts/Desired-Blur-Windows-x64-Installer.exe
+          if-no-files-found: error
+          retention-days: 30
