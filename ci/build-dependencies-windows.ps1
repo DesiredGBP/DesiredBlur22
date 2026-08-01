@@ -1,7 +1,11 @@
 # Create necessary directories
 $outDir = Join-Path $PWD "out"
 
-Remove-Item -Path $outDir -Recurse -Force
+if (Test-Path $outDir) {
+    Remove-Item -Path $outDir -Recurse -Force
+}
+
+New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 
 $vapoursynthDir = Join-Path $outDir "vapoursynth"
 $ffmpegDir = Join-Path $outDir "ffmpeg"
