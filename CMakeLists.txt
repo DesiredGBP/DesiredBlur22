@@ -13,7 +13,7 @@ endif()
 # Force static runtime on Windows
 set(
   CMAKE_MSVC_RUNTIME_LIBRARY
-  "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+  "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
 )
 
 project(blur LANGUAGES C CXX)
