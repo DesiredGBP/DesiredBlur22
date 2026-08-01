@@ -1,17 +1,21 @@
 #include "tasks.h"
 #include "gui.h"
+#include "license_auth.h"
 
-#include <SDL3/SDL_main.h> // https://wiki.libsdl.org/SDL3/SDL_main#remarks
+#include <SDL3/SDL_main.h>
 
 int main(int argc, char* argv[]) {
-	// fix logs on windows
 #ifdef WIN32
-	SetConsoleOutputCP(CP_UTF8);
+    SetConsoleOutputCP(CP_UTF8);
 #endif
 
-	std::vector<std::string> arguments(argv + 1, argv + argc);
+    if (!licensing::authenticate()) {
+        return 1;
+    }
 
-	std::thread(tasks::run, arguments).detach();
+    std::vector<std::string> arguments(argv + 1, argv + argc);
 
-	return gui::run();
+    std::thread(tasks::run, arguments).detach();
+
+    return gui::run();
 }
