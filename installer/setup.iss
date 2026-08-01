@@ -2,9 +2,9 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 #include "environment.iss"
 
-#define MyAppName "blur"
+#define MyAppName "Desired blur"
 #define MyAppVersion "2.0"
-#define MyAppPublisher "tekno"
+#define MyAppPublisher "Desired"
 #define MyAppURL "https://f0e.github.io/blur"
 
 [Setup]
@@ -14,9 +14,6 @@ AppId={{D283CF94-CD1F-432D-B4BE-0516562C258B}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 ;AppVerName={#MyAppName} {#MyAppVersion}
-AppPublisher={#MyAppPublisher}
-AppPublisherURL={#MyAppURL}
-AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf}\{#MyAppName}
 DisableProgramGroupPage=yes
