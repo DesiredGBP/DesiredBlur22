@@ -23,15 +23,18 @@
       "name": "boost-process",
       "version>=": "1.83.0"
     },
+    "boost-filesystem",
+    "boost-system",
     "cli11",
+    "cpr",
     {
       "name": "cppwinrt",
       "platform": "windows"
     },
-    "cpr",
     "freetype",
     "glad",
     "gtest",
+    "libsodium",
     "nlohmann-json",
     {
       "name": "sdbus-cpp",
@@ -44,7 +47,7 @@
         "jpeg"
       ]
     },
-    "tl-expected",
-    "spdlog"
+    "spdlog",
+    "tl-expected"
   ]
 }
